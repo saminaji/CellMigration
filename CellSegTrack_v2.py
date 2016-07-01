@@ -223,23 +223,8 @@ if __name__=='__main__':
         xx = centroid[0]
         CellCentroid.append(xx)
     cc = CellCentroid[0]
-    print cc[0]
-    print cc[1]
-    print cc[2]
-    print cc[3]
-
+  
     unpacked = zip(cc[0], cc[1], cc[2], cc[3], cc[4])
-    # plot scatter trajectories
-    plt.scatter(cc[2], cc[3])
-    plt.ylim(0, 600)
-    plt.xticks(np.linspace(0, 700, 1))
-    plt.show(False)
-    plt.draw()
-    time.sleep(2)
-    # Save figure in png  formats
-    plt.savefig('trajectoriesCe.png', bbox_inches='tight')
-
-    display.clear_output(wait=True)
     # save data to csv file format
     with open('data_Centroid_tiff' + str(count) + '.csv', 'wt') as f1:
         writer = csv.writer(f1, lineterminator='\n')
