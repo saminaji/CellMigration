@@ -87,10 +87,7 @@ def watershedtracking(frame):
             color3 = tuple([256 * t for t in color2])
             ((x, y), _) = cv2.minEnclosingCircle(c)
             cv2.circle(image, (int(x), int(y)), 2, color3, 2)  # frame
-
-            # cv2.drawContours(image, c, -1, color3, 5)
-            cv2.imshow("Contour", image)
-            cv2.imwrite('/home/sami/Desktop/code/segmentation/immune_cell_seg/drawContour/Image_%d.png' % c, image)           
+  
             cv2.drawContours(image, cnts, -1, color3, 5)
             cv2.imwrite('/home/sami/Desktop/code/segmentation/immune_cell_seg/drawContour/Image_%d.png' % i, image)
             cv2.waitKey(0)
