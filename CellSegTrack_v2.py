@@ -18,6 +18,12 @@ from skimage.color.colorlabel import label2rgb
 import pylab as py
 import csv
 from IPython import display
+import datatime
+
+# create a directory for each submission
+now = datetime.datetime.now()
+dirLast = str(now.year)+'_'+str(now.month)+'_'+str(now.day)+'_'+str(now.hour)+'_'+str(now.minute)
+os.mkdir(dirLast)
 
 
 def filereader(filesdirectory):
@@ -64,7 +70,7 @@ def watershedsegmentation(frame, N1, nf):
         dilation = cv2.dilate(im, kernel, iterations=2)
         Gradient = cv2.morphologyEx(dilation, cv2.MORPH_GRADIENT, kernel)
         closing = cv2.morphologyEx(Gradient, cv2.MORPH_CLOSE, kernel)
-        cv2.imwrite('/home/sami/Desktop/code/segmentation/immune_partner/Graient_%d.png' % N1, closing)
+        cv2.imwrite('/dirLast/Graient_%d.png' % N1, closing)
 
         shifted = cv2.pyrMeanShiftFiltering(closing, 10, 20)
         gray = cv2.cvtColor(shifted, cv2.COLOR_BGR2GRAY)
@@ -82,13 +88,13 @@ def watershedsegmentation(frame, N1, nf):
 
         #  loop over the unique labels returned by the Watershed
         # algorithm for finding the centriod cx and cy
-        # of each contour Cx=M10/M00 and Cy=M01/M00.
+        # of each contour Cx=M10/M00 and Cy=M01/M00. Generate different colors for each cell
         N = len(np.unique(labels))
         HSV_tuples = [(B * 2.0 / N, 0.6, 0.6) for B in range(N)]
         RGB_tuples = map(lambda B: colorsys.hsv_to_rgb(*B), HSV_tuples)
         mask = np.zeros(gray.shape, dtype="uint8")
         count2 = 0
-        NumFiles = len(glob.glob('/home/sami/Desktop/code/segmentation/immune_partner/contour2/*.png'))
+        NumFiles = len(glob.glob('/dirLast/*.png'))
 
         for label in np.unique(labels):
             # if the label is zero, we are examining the 'background' so simply ignore it
@@ -112,7 +118,7 @@ def watershedsegmentation(frame, N1, nf):
             # save some samples for further analysis
             if NumFiles < N1:
                 cv2.drawContours(frame, cnt, -1, color3, 2)
-                cv2.imwrite('/home/sami/Desktop/code/segmentation/immune_partner/contour2/Image_%d.png' % nf, frame)
+                cv2.imwrite('/dirLast/Image_%d.png' % nf, frame)
 
     except EOFError:
         pass
