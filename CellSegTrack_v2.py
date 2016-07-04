@@ -9,7 +9,6 @@ from skimage.feature import peak_local_max
 from skimage.morphology import watershed
 from scipy import ndimage
 import numpy as np
-import seaborn as sns
 import random
 import sys
 import time
@@ -33,7 +32,7 @@ def filereader(filesdirectory):
     try:
         while cap.isOpened():
             ret, img = cap.read()
-            # get the frame in seconds
+            # get time when the frame captured
             t1 = cap.get(0)
             timestamp.append(t1)
             if img is None:
@@ -70,7 +69,7 @@ def watershedsegmentation(frame, N1, nf):
         dilation = cv2.dilate(im, kernel, iterations=2)
         Gradient = cv2.morphologyEx(dilation, cv2.MORPH_GRADIENT, kernel)
         closing = cv2.morphologyEx(Gradient, cv2.MORPH_CLOSE, kernel)
-        cv2.imwrite('/dirLast/Graient_%d.png' % N1, closing)
+        cv2.imwrite('/dirLast/Gradient_%d.png' % N1, closing)
 
         shifted = cv2.pyrMeanShiftFiltering(closing, 10, 20)
         gray = cv2.cvtColor(shifted, cv2.COLOR_BGR2GRAY)
@@ -196,10 +195,10 @@ if __name__=='__main__':
                 check = M1['m00']
 
                 if check != 0.0:
-                    centroid_xx = int(M1['m10'] / check)  # Get the x-centriod the cnt
-                    centroid_yy = int(M1['m01'] / check)  # get the y-centriod the cnt
+                    centroid_xx = int(M1['m10'] / check)  # Get the x-centriod of the cnt
+                    centroid_yy = int(M1['m01'] / check)  # get the y-centriod of the cnt
 
-                # to make sure the movement of a cell is  beyond the reasonable boundaries
+                # to make sure the movement of a cell is not beyond the reasonable velocity
                 diff = abs(centroid_xx - centroid_x)
                 diff2 = abs(centroid_yy - centroid_y)
                 print('Moved {} pixel(s) on the x-axis'.format(diff))
@@ -208,8 +207,7 @@ if __name__=='__main__':
                 if diff > 10:
                     continue
 
-                # update the previous centroid with the new centroid of a particular cell
-                # print centroid_xx, centroid_yy
+               
                 elipse += 8
                 # keep the trajectories of each cell
                 XTrajectory.append(centroid_xx)
@@ -217,6 +215,7 @@ if __name__=='__main__':
                 period.append(int(elipse))
                 frameID.append(int(ii))
                 CID.append(index2)
+                # update the previous centroid with the new centroid 
                 centroid_x = centroid_xx
                 centroid_y = centroid_yy
 
