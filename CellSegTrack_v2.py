@@ -231,7 +231,7 @@ if __name__=='__main__':
   
     unpacked = zip(cc[0], cc[1], cc[2], cc[3], cc[4])
     # save data to csv file format
-    with open('data_Centroid_tiff' + str(count) + '.csv', 'wt') as f1:
+    with open('/dirLast/data_' + str(count) + '.csv', 'wt') as f1:
         writer = csv.writer(f1, lineterminator='\n')
         writer.writerow(('frameID', 'CellID', 'x-axis', "y-axis", 'time',))
         for value in unpacked:
