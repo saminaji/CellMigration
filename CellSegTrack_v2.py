@@ -19,6 +19,9 @@ import csv
 from IPython import display
 import datatime
 
+# The algorithm aims at performing segmentations and tracking by means of watershed and plus morphological shape operations.
+# Here we apply several morphological such as deliation, closing, and gradient 
+
 # create a directory for each submission
 now = datetime.datetime.now()
 dirLast = str(now.year)+'_'+str(now.month)+'_'+str(now.day)+'_'+str(now.hour)+'_'+str(now.minute)
@@ -140,7 +143,7 @@ if __name__=='__main__':
 
     for p in range(len(path[0])):
 
-        if path[-1] == 'f':
+        if path[-3] == 'tif':
             f = readtiff(path)
         else:
             _, f = filereader(path)
