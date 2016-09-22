@@ -3,6 +3,8 @@ import Tkinter as tk
 from Tkinter import *
 import tkMessageBox
 import pygubu
+from collections import deque
+import zipfile
 try:
     import tkinter as tk  # for python 3
 except:
@@ -17,6 +19,10 @@ from tkFileDialog import asksaveasfile
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import tkMessageBox
+from skimage.feature import peak_local_max
+from skimage.morphology import watershed
+from scipy import ndimage
+from sklearn import neighbors
 import os, csv
 import cv2
 import tkFont
@@ -33,8 +39,6 @@ import ImageSequence
 import glob
 import ImageTk
 import mahotas
-
-
 
 # get the platform
 if platform.system() == 'Linux':
@@ -75,9 +79,6 @@ if os.path.exists(masktrajectorydir) is False:
 if os.path.exists(overlaytrajectoryanidir) is False:
     os.mkdir(overlaytrajectoryanidir)
 
-kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-
-
 # parameters for Shi-Tomasi Corner detectors
 
 
@@ -88,7 +89,7 @@ lk_params = dict(winSize=(20, 20), maxLevel=2,
 
 # Create some random colors
 
-color = np.random.randint(0, 255, (200, 3))
+color = np.random.randint(0, 255, (500, 3))
 
 
 def read_tiff(self, path):
@@ -98,6 +99,8 @@ def read_tiff(self, path):
     try:
         for cc, tframe in enumerate(tif.iter_images()):
             frames.append(tframe)
+            print cc
+            cv2.imwrite('/home/sami/framesPPT/nextFrame/newImg/%d.jpg'%cc, tframe)
     except EOFError:
         pass
     end = start - time.time()
@@ -186,13 +189,14 @@ def morph_erode(self, image):
     return image
 
 
-def white_background(image):
+def white_background(image, kernel):
 
     im = cv2.threshold(image, 173, 255, cv2.THRESH_BINARY)
     im = im[1]
     dilation = cv2.dilate(im, kernel, iterations=1)
     gradient = cv2.morphologyEx(dilation, cv2.MORPH_GRADIENT, kernel)
     closing = cv2.morphologyEx(gradient, cv2.MORPH_CLOSE, kernel)
+
 
     shifted = cv2.pyrMeanShiftFiltering(closing, 10, 20)
     gray = cv2.cvtColor(shifted, cv2.COLOR_BGR2GRAY)
@@ -208,7 +212,7 @@ def white_background(image):
     labels = watershed(-D, markers, mask=thresh)
 
     # create a mask
-    mask2 = np.zeros(gray.shape, dtype="uint8")
+    mask2 = np.zeros(image.shape, dtype="uint8")
 
     #  loop over the unique labels returned by the Watershed  algorithm for
     for label in np.unique(labels):
@@ -222,10 +226,41 @@ def white_background(image):
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         mask2 = cv2.morphologyEx(mask2, cv2.MORPH_OPEN, kernel)
         mask2 = cv2.morphologyEx(mask2, cv2.MORPH_CLOSE, kernel)
-    return mask
+    return mask2
 
 
-def black_background(image):
+def basic_seg(img, images):
+    noOfFrames = len(images)
+    bgFrame = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    for i in range(1, 4):
+        bgFrame = bgFrame / 2 + \
+                  cv2.cvtColor((images[i]),
+                               cv2.COLOR_BGR2GRAY) / 2
+
+    # Array to save the object locations
+    objLocs = np.array([None, None])
+
+    # Kernel for morphological operations
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+
+    # Display the frames like a video
+    # Read each frame
+    frame = images[1]
+
+    # Perform background subtraction after median filter
+    diffFrame = cv2.absdiff(cv2.cvtColor(cv2.medianBlur(frame, 7), \
+                                         cv2.COLOR_BGR2GRAY), cv2.medianBlur(bgFrame, 7))
+
+    # Otsu thresholding to create the binary image
+    [th, bwFrame] = cv2.threshold(diffFrame, 0, 255, cv2.THRESH_OTSU)
+
+    # Morphological opening operation to remove small blobs
+    bwFrame = cv2.morphologyEx(bwFrame, cv2.MORPH_OPEN, kernel)
+
+    return bwFrame
+
+def black_background(image, kernel):
+
     shifted = cv2.pyrMeanShiftFiltering(image, 10, 39)
     gray = cv2.cvtColor(shifted, cv2.COLOR_BGR2GRAY)
     thresh = cv2.threshold(gray, 0, 255,
@@ -256,21 +291,22 @@ def histogram_equaliz(image):
     old_gray_image = cv2.equalizeHist(image)
     return old_gray_image
 
-def shi_tomasi(image,maxCorner, qualityLevel,MinDistance ):
+
+def shi_tomasi(image, maxCorner, qualityLevel, MinDistance):
     # detect corners in the image
+
     corners = cv2.goodFeaturesToTrack(image,
                                       maxCorner,
                                       qualityLevel,
                                       MinDistance,
                                       mask=None,
                                       blockSize=7)
-    corners = np.float32(corners)
 
     return corners
 
 
-def harris_corner (image, maxCorner, qualityLevel, minDistance):
-    corners = cv2.goodFeaturesToTrack(old_gray_image,  # img
+def harris_corner(image, maxCorner, qualityLevel, minDistance):
+    corners = cv2.goodFeaturesToTrack(image,  # img
                                       maxCorner,  # maxCorners
                                       qualityLevel,  # qualityLevel
                                       minDistance,  # minDistance
@@ -283,37 +319,31 @@ def harris_corner (image, maxCorner, qualityLevel, minDistance):
     return corners
 
 
-def optical_flow(self, frames, old_gray_image1,feature_params, segMeth ):
+def optical_flow(self, frames, old_gray_image1, intialPoints, segMeth, maxCorner, qualityLevel, minDistance,
+                 updateconvax, progessbar):
 
     old_gray_image2 = cv2.cvtColor(old_gray_image1, cv2.COLOR_BGR2GRAY)
+    old_gray_image2 = histogram_equaliz(old_gray_image2)
 
-    if segMeth == 'whiteBG':
-        old_gray_image = white_background(old_gray_image2)
-    if segMeth == 'blackBG':
-        old_gray_image = black_background(old_gray_image2)
 
-    intialPoints = cv2.goodFeaturesToTrack(old_gray_image, mask=None, **feature_params)
+    print intialPoints
 
-    mask = np.zeros_like(old_gray_image1)
+    mask = np.zeros_like(old_gray_image1,)
 
     finalFrame = len(frames)
 
     trajectoriesX, trajectoriesY, cellIDs, frameID = [], [], [], []
 
-    for i, nextFrame in enumerate(frames):
+    for i, frame in enumerate(frames):
         try:
-            new_gray_image = cv2.cvtColor(nextFrame, cv2.COLOR_BGR2GRAY)
+            new_gray_image = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             # perform histogram equalization to balance image color intensity
-            if segMeth == 'Lucas and Kanade':
-                new_gray_image = histogram_equaliz(new_gray_image)
-            if segMeth == 'whiteBG':
-                new_gray_image = white_background(new_gray_image)
-            if segMeth == 'blackBG':
-                new_gray_image = black_background(new_gray_image)
+            new_gray_image = histogram_equaliz(new_gray_image)
 
-            # calculate optical flow
+            progessbar.step(i*2)
 
-            newPoints, st, err = cv2.calcOpticalFlowPyrLK(old_gray_image, new_gray_image, intialPoints, None,
+
+            newPoints, st, err = cv2.calcOpticalFlowPyrLK(old_gray_image2, new_gray_image, intialPoints, None,
                                                           **lk_params)
 
             # Select good points
@@ -331,22 +361,21 @@ def optical_flow(self, frames, old_gray_image1,feature_params, segMeth ):
                 c, d = old.ravel()
 
                 #mask = cv2.line(mask, (a, b), (c, d), color[ii].tolist(), 2)
-                mask = cv2.line(mask, (a, b), (c, d), (255,255,255), 2)
+                mask = cv2.line(mask, (a, b), (c, d), (255, 255, 255), 2)
 
-
-                # frame = cv2.circle(frame, (a, b), 5, color[i].tolist(), -1)
-                #nextFrame = cv2.putText(nextFrame, "%d" % ii, (a, b), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1,
+                #frame = cv2.circle(frame, (a, b), 5, color[i].tolist(), -1)
+                #frame = cv2.putText(frame, "%d" % ii, (a, b), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1,
                 #                        color[ii].tolist())
 
-                nextFrame = cv2.putText(nextFrame, "%d" % ii, (a, b), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1,
-                                        (255,255,255))
+                #nextFrame = cv2.putText(nextFrame, "%d" % ii, (a, b), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1,
+                #                                                (255, 255, 255))
 
-                img = cv2.add(nextFrame, mask)
+                img = cv2.add(frame, mask)
 
                 edged2 = np.hstack([mask, img])
 
                 # Now update the previous frame and previous points
-                old_gray_image = new_gray_image.copy()
+                old_gray_image2 = new_gray_image.copy()
 
                 intialPoints = good_new.reshape(-1, 1, 2)
                 # Keep the data of for later processing
@@ -354,26 +383,35 @@ def optical_flow(self, frames, old_gray_image1,feature_params, segMeth ):
                 trajectoriesY.append(b)
                 cellIDs.append(ii)
                 frameID.append(i)
-            r = 600.0 / img.shape[1]
-            dim = (600, int(img.shape[0] * r))
+            r = 500.0 / img.shape[1]
+            dim = (500, int(img.shape[0] * r))
 
             # perform the actual resizing of the image and show it
             resized = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
             img = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
-            cv2.imwrite(trackingdir + '%d.png' % i, img)
-            cv2.imwrite(masktrajectorydir + '%d.png' % i, mask)
-            cv2.imwrite(overlaytrajectorydir + '%d.png' % i, resized)
-            # pb = ttk.Progressbar(root, orient="horizontal", length=finalFrame, mode="indeterminate")
+            mahotas.imsave(trackingdir + '%d.gif' % i, img)
+            mahotas.imsave(masktrajectorydir + '%d.gif' % i, mask)
+            mahotas.imsave(overlaytrajectorydir + '%d.gif' % i, resized)
+
+            tmp_path = trackingdir + '%d.gif' % i
+            image = img2.open(str(tmp_path))
+            image = ImageTk.PhotoImage(image)
+            root.image = image
+            imagesprite = updateconvax.create_image(283, 187, image=image, anchor='c')
+            time.sleep(1)
+            updateconvax.update_idletasks()  # Force redraw
+            updateconvax.delete(imagesprite)
 
             if i == finalFrame - 1:
                 cv2.imwrite(trajectorydir + 'finalTrajectory.png', img)
                 cv2.imwrite(trajectorydir + 'Plottrajector.png', mask)
+                image = img2.open(str(tmp_path))
+                image = ImageTk.PhotoImage(image)
+                root.image = image
+                imagesprite = updateconvax.create_image(280, 193, image=image, anchor='c')
         except EOFError:
             continue
-        i * 2
-        self.pbar_f.step(1)
-        self.update()
-        time.sleep(0.1)
+
 
     unpacked = zip(frameID, cellIDs, trajectoriesX, trajectoriesY)
     with open(csvdir + 'data.csv', 'wt') as f1:
@@ -383,7 +421,7 @@ def optical_flow(self, frames, old_gray_image1,feature_params, segMeth ):
             writer.writerow(value)
 
 
-def shape_matching(self, newframes, oldframes, kernel, trackingMethd=''):
+def shape_matching(self, newframes, oldframes, kernel, segMeth=''):
     # PERFORM SEGMENTATION USING WATERSHED ALGORITHM
     if trackingMethd == 'white':
         mask, _ = white_background(oldframes)
@@ -393,12 +431,113 @@ def shape_matching(self, newframes, oldframes, kernel, trackingMethd=''):
         tkMessageBox.showinfo('Optical flow', 'defualt tracking is set to optical flow')
 
 
-def centroid_matching(self, newframes, oldframes, kernel, trackingMethd=''):
+def centroid_matching(self, oldframe, frames, kernel, intialPoints,  maxCorner, qualityLevel, minDistance,
+                 updateconvax, segMeth):
     # PERFORM SEGMENTATION USING WATERSHED ALGORITHM
-    if trackingMethd == 'white':
+    if segMeth == 'white':
+        mask = white_background(oldframe)
+    if segMeth == 'black':
+        mask = black_background(oldframe)
+    if segMeth == 'haris':
+        #intialPoints = shi_tomasi(oldframe, maxCorner, qualityLevel, minDistance)
+        print 'ok'
+    if segMeth == 'shi':
+        #intialPoints = harris_corner(oldframe, maxCorner, qualityLevel, minDistance)
+        print 'ok'
+    print segMeth
+    mask =  mask = np.zeros_like(oldframe,)
+    for i,frame in enumerate(frames):
+        #try:
+            tm_img =   cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            tm_img = histogram_equaliz(tm_img)
+            if segMeth =='shi':
+                newPoints = shi_tomasi(tm_img, maxCorner, qualityLevel, minDistance)
+            if segMeth == 'haris':
+                newPoints == harris_corner(tm_img, maxCorner,qualityLevel, minDistance)
+
+            good_new = newPoints
+
+            good_old = intialPoints
+
+            for ii, (new, old) in enumerate(zip(good_new, good_old)):
+                a, b = new.ravel()
+
+                c, d = old.ravel()
+
+                mask = cv2.line(mask, (a, b), (c, d), color[ii].tolist(), 2)
+                #mask = cv2.line(mask, (a, b), (c, d), (255, 255, 255), 2)
+
+                #frame = cv2.circle(frame, (a, b), 5, color[i].tolist(), -1)
+                #frame = cv2.putText(frame, "%d" % ii, (a, b), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1,
+                #                        color[ii].tolist())
+
+                #frame = cv2.putText(frame, "%d" % ii, (a, b), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1,
+                #                        (255, 255, 255))
+
+                img = cv2.add(frame, mask)
+
+                edged2 = np.hstack([mask, img])
+
+                # Now update the previous frame and previous points
+                oldframe = frame.copy()
+
+                intialPoints = good_new.reshape(-1, 1, 2)
+
+                # Keep the data of for later processing
+                #trajectoriesX.append(a)
+                #trajectoriesY.append(b)
+                #cellIDs.append(ii)
+                #frameID.append(i)
+            r = 500.0 / img.shape[1]
+            dim = (500, int(img.shape[0] * r))
+
+            # perform the actual resizing of the image and show it
+            resized = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
+            img = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
+            mahotas.imsave(trackingdir + '%d.gif' % i, img)
+            mahotas.imsave(masktrajectorydir + '%d.gif' % i, mask)
+            mahotas.imsave(overlaytrajectorydir + '%d.gif' % i, resized)
+
+            tmp_path = trackingdir + '%d.gif' % i
+            image = img2.open(str(tmp_path))
+            image = ImageTk.PhotoImage(image)
+            root.image = image
+            imagesprite = updateconvax.create_image(280, 193, image=image, anchor='c')
+            time.sleep(1)
+            updateconvax.update_idletasks()  # Force redraw
+            updateconvax.delete(imagesprite)
+
+            if i == 100 - 1:
+                cv2.imwrite(trajectorydir + 'finalTrajectory.png', img)
+                cv2.imwrite(trajectorydir + 'Plottrajector.png', mask)
+                image = img2.open(str(tmp_path))
+                image = ImageTk.PhotoImage(image)
+                root.image = image
+                imagesprite4 = updateconvax.create_image(280, 193, image=image, anchor='c')
+
+            #except EOFError:
+            #    continue
+
+    #unpacked = zip(frameID, cellIDs, trajectoriesX, trajectoriesY)
+    #with open(csvdir + 'data.csv', 'wt') as f1:
+    #    writer = csv.writer(f1, lineterminator='\n')
+    #    writer.writerow(('frameID', 'CellIDs', 'x-axis', "y-axis",))
+    #    for value in unpacked:
+    #        writer.writerow(value)
+
+'''
+def centroid_matching(self, newframes, oldframes, kernel, intialPoints,  maxCorner, qualityLevel, minDistance,
+                 updateconvax, segMeth=''):
+    # PERFORM SEGMENTATION USING WATERSHED ALGORITHM
+    if segMeth == 'white':
         mask = white_background(oldframes)
-    if trackingMethd == 'black':
+    if segMeth == 'black':
         mask = black_background(oldframes)
+    if segMeth =='haris':
+        image = shi_tomasi(newframes,maxCorner, qualityLevel, minDistance)
+    if segMeth =='shi':
+        image = harris_corner(newframes,maxCorner, qualityLevel, minDistance)
+
     else:
         tkMessageBox.showinfo('Optical flow', 'defualt tracking is set to optical flow')
 
@@ -522,59 +661,78 @@ def centroid_matching(self, newframes, oldframes, kernel, trackingMethd=''):
         for value in unpacked:
             writer.writerow(value)
     count += 1
-
-
+'''
 
 class Application:
     def __init__(self, master):
 
-        #1: Create a builder
+        # 1: Create a builder
 
         self.builder = builder = pygubu.Builder()
 
-        #2: Load an ui file
+        # 2: Load an ui file
         builder.add_from_file('celltracker.ui')
 
-        #3: Create the widget using a master as parent
+        # 3: Create the widget using a master as parent
         self.mainwindow = builder.get_object('mainwindow', master)
 
-        #4: Get the labeled frame
+        # 4: Get the labeled frame
         self.labelframe1 = builder.get_object("Labelframe_19")
 
-
-        #5:  Get the filename or path
+        # 5:  Get the filename or path
         self.pathchooserinput_3 = builder.get_object("pathchooserinput_3")
 
-        #6: Read the files
+        # 6: Read the files
         self.button = builder.get_object("Button_10")
 
-        #7: Create a progress bar
+        # 7: Create a progress bar
         self.progressdialog = ttk.Progressbar(self.labelframe1, mode='indeterminate', value=0)
-        self.progressdialog.grid(row=2, column=0, sticky=N+E+W)
+        self.progressdialog.grid(row=2, column=0, sticky=N + E + W)
 
-        #8:  manage a segmentation parameters
+        self.Labelframe_22 = builder.get_object("Labelframe_22")
+        self.progressdialog2 = ttk.Progressbar(self.Labelframe_22, mode='indeterminate', value=0)
+        self.progressdialog2.grid(row=3, column=0, columnspan=5,sticky=N + E + W)
+
+        # 8:  Manage a segmentation parameters
 
         self.labelframe2 = builder.get_object("Labelframe_12")
 
-        #8.1: scale label
+        # 8.1: Scale label
         self.label = Label(self.labelframe2)
         self.label.grid(row=1, column=5, sticky=W)
         self.fixscale = 0.5
         self.label.configure(text=self.fixscale)
 
-        # 8.2: entry
+        # 8.2: Entry
         self.cellEstimate = 200
-        self.minDistance = 20
+        self.minDistance = 10
 
-        #9: perform segmentation
+        # 9: Perform segmentation
 
         self.preview = builder.get_object("Button_1")
 
         self.convax1 = builder.get_object("Canvas_4")
 
+        self.segmentation = self.builder.get_variable("seg")
+        self.color = self.builder.get_variable("background")
+
+        self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+
+        # 10: Create a tracking labels
+
+        self.track = builder.get_variable("track")
+
+        self.trackconvax = builder.get_object("Canvas_2")
+
+        #11: Create a file mining
+
+        self.generatefile = builder.get_object("Button_3")
+
+        #12: about the toolbox
+
+        self.clear = builder.get_object("Button_11")
 
         builder.connect_callbacks(self)
-
 
         ##: set global variable
         self.frames, self.timestamp = [], []
@@ -585,10 +743,10 @@ class Application:
         path = self.pathchooserinput_3.cget('path')
 
         # show the path
-        if path :
+        if path:
             tkMessageBox.showinfo('You choosed', str(path))
 
-        # Set a global variable
+            # Set a global variable
             # Check for the file format
             if '.tif' in path:
                 tif = TIFF.open(path, mode='r')
@@ -598,17 +756,17 @@ class Application:
                         self.progressdialog.step(cc)
                         self.progressdialog.update()
 
-                        if cc > 5:
-                            break
-                        #self.mainwindow.update()
+
+                        # self.mainwindow.update()
                 except EOFError:
                     tkMessageBox.showinfo('Error', 'file cant be read!!!')
                     pass
                 self.progressdialog.stop()
 
-            if '.avi'in path:
+            if '.avi' in path:
 
                 cap = cv2.VideoCapture(path)
+                cc = 0
                 try:
                     while cap.isOpened():
                         ret, img = cap.read()
@@ -621,6 +779,7 @@ class Application:
                         self.progressdialog.step(cc)
                         self.progressdialog.update()
                         time.sleep(0.1)
+                        cc += 1
                         # self.mainwindow.update()
                 except EOFError:
                     tkMessageBox.showinfo('Error', 'file cant be read!!!')
@@ -632,12 +791,12 @@ class Application:
 
             # perform the actual resizing of the image and show it
             resized = cv2.resize(tmp_img, dim, interpolation=cv2.INTER_AREA)
-            mahotas.imsave('raw_image.gif',resized)
-            image = img2.open('raw_image.gif')
+            mahotas.imsave('raw_image.gif', resized)
+            image1 = img2.open('raw_image.gif')
 
-            image = ImageTk.PhotoImage(image)
-            root.image = image
-            imagesprite = self.convax1.create_image(270, 155, image=image, anchor='c')
+            image1 = ImageTk.PhotoImage(image1)
+            root.image1 = image1
+            _ = self.convax1.create_image(270, 155, image=image1, anchor='c')
 
         else:
             tkMessageBox.showinfo("No file", "Choose a file to process")
@@ -647,31 +806,48 @@ class Application:
         "Display the values of the 2 x Entry widget variables"
         self.cellEstimate = self.builder.get_object('Entry_1')
         self.minDistance = self.builder.get_object('Entry_3')
-        self.preconvax = self.builder.get_object("Canvas_1")
+        self.preconvax = self.builder.get_object("Canvas_5")
 
         self.cellEstimate = self.cellEstimate.get()
         self.minDistance = self.minDistance.get()
-
-
-        self.segmentation = self.builder.get_variable("seg")
-        self.color = self.builder.get_variable("background")
 
         if self.frames:
             # normalize histogram for improving the image contrast
             self.normalizedImage = cv2.cvtColor(self.frames[0], cv2.COLOR_BGR2GRAY)
             self.normalizedImage = histogram_equaliz(self.normalizedImage)
+            self.segMethod = self.segmentation.get()
 
-
-            if self.segmentation.get() == 2:
+            if self.segMethod == 2:
                 if self.color.get() == 1:
-                    self.prev_image = black_background(self.normalizedImage)
+                    self.prev_image = black_background(self.frames[0], self.kernel)
+                    r = 500.0 / self.prev_image.shape[1]
+                    dim = (500, int(self.prev_image.shape[0] * r))
+
+                    # perform the actual resizing of the image and show it
+                    self.prev_image = cv2.resize(self.prev_image, dim, interpolation=cv2.INTER_AREA)
+                    mahotas.imsave('SegImage.gif', self.prev_image)
+                    tmp_pre = img2.open('SegImage.gif')
+                    tmp_pre = ImageTk.PhotoImage(tmp_pre)
+                    root.tmp_pre = tmp_pre
+                    segprev = self.preconvax.create_image(280, 185, image=tmp_pre)
                 if self.color.get() == 2:
-                    self.prev_image = white_background(self.normalizedImage)
-            if self.segmentation.get() == 3:
-                self.prev_image = harris_corner(self.normalizedImage,self.cellEstimate, self.fixscale,self.minDistance)
+                    self.prev_image = white_background(self.frames[0], self.kernel)
+                    r = 500.0 / self.prev_image.shape[1]
+                    dim = (500, int(self.prev_image.shape[0] * r))
+
+                    # perform the actual resizing of the image and show it
+                    self.prev_image = cv2.resize(self.prev_image, dim, interpolation=cv2.INTER_AREA)
+                    mahotas.imsave('SegImage.gif', self.prev_image)
+                    tmp_pre = img2.open('SegImage.gif')
+                    tmp_pre = ImageTk.PhotoImage(tmp_pre)
+                    root.tmp_pre = tmp_pre
+                    segprev = self.preconvax.create_image(280, 185, image=tmp_pre)
+            if self.segMethod == 3:
+                self.prev_image = harris_corner(self.normalizedImage, int(self.cellEstimate), float(self.fixscale),
+                                                int(self.minDistance))
                 for corner in self.prev_image:
                     x, y = corner[0]
-                    cv2.circle(self.normalizedImage, (x, y), 5, (0, 255, 0), -1)
+                    cv2.circle(self.normalizedImage, (int(x),int(y)),5, (0,0,255),-1)
 
                 r = 500.0 / self.normalizedImage.shape[1]
                 dim = (500, int(self.normalizedImage.shape[0] * r))
@@ -679,13 +855,14 @@ class Application:
                 # perform the actual resizing of the image and show it
                 self.normalizedImage = cv2.resize(self.normalizedImage, dim, interpolation=cv2.INTER_AREA)
                 mahotas.imsave('SegImage.gif', self.normalizedImage)
-                tmp_pre= img2.open('SegImage.gif')
+                tmp_pre = img2.open('SegImage.gif')
                 tmp_pre = ImageTk.PhotoImage(tmp_pre)
                 root.tmp_pre = tmp_pre
-                segprev = self.  self.preconvax.create_image(280, 185, image=tmp_pre)
+                segprev = self.preconvax.create_image(280, 185, image=tmp_pre)
 
-            if self.segmentation.get() == 4:
-                self.prev_image = shi_tomasi(self.normalizedImage, int(self.cellEstimate), float(self.fixscale), int(self.minDistance))
+            if self.segMethod == 4:
+                self.prev_image = shi_tomasi(self.normalizedImage, int(self.cellEstimate), float(self.fixscale),
+                                             int(self.minDistance))
                 for corner in self.prev_image:
                     x, y = corner[0]
                     cv2.circle(self.normalizedImage, (x, y), 5, (0, 255, 0), -1)
@@ -700,25 +877,169 @@ class Application:
                 tmp_pre = ImageTk.PhotoImage(tmp_pre)
                 root.tmp_pre = tmp_pre
                 segprev = self.preconvax.create_image(280, 185, image=tmp_pre)
+
+            if self.segMethod == 5:
+                self.prev_image = basic_seg(self.frames[0], self.frames)
+                #print corners
+                '''for corner in corners:
+                    x, y = corner
+                    cv2.circle(self.normalizedImage, (int(x), int(y)), 5, (0, 0, 255), -1)'''
+
+
+
+                r = 500.0 / self.prev_image.shape[1]
+                dim = (500, int(self.prev_image.shape[0] * r))
+
+                # perform the actual resizing of the image and show it
+                self.prev_image = cv2.resize(self.prev_image, dim, interpolation=cv2.INTER_AREA)
+                mahotas.imsave('SegImage.gif', self.prev_image)
+                tmp_pre = img2.open('SegImage.gif')
+                tmp_pre = ImageTk.PhotoImage(tmp_pre)
+                root.tmp_pre = tmp_pre
+                segprev = self.preconvax.create_image(280, 185, image=tmp_pre)
         else:
             tkMessageBox.showinfo('No file', 'no data is found!!!')
 
+        return self.segMethod
+
+    # perform tracking
+    def track_on_click(self):
+        if self.frames:
+            self.cellEstimate = self.builder.get_object('Entry_1')
+            self.minDistance = self.builder.get_object('Entry_3')
+
+            if self.frames:
+                self.normalizedImage = cv2.cvtColor(self.frames[0], cv2.COLOR_BGR2GRAY)
+                self.normalizedImage = histogram_equaliz(self.normalizedImage)
+            else:
+                pass
 
 
+            if self.segmentation.get() == 2:
+                if self.color.get() == 1:
+                    self.mask = black_background(self.frames[0], self.kernel)
+                    #self.mask = histogram_equaliz(self.mask)
+                    self.initialpoints = shi_tomasi(self.mask, int(self.cellEstimate.get()),
+                                                    float(self.fixscale),
+                                                    int(self.minDistance.get()))
+                    self.seg = 'black'
+                if self.color.get() == 2:
+                    self.mask = white_background(self.frames[0], self.kernel)
+                    self.mask = cv2.cvtColor(self.mask, cv2.COLOR_BGR2GRAY)
+                    self.mask = histogram_equaliz(self.mask)
+
+                    self.initialpoints = shi_tomasi(self.mask, int(self.cellEstimate.get()),
+                                                    float(self.fixscale),
+                                                    int(self.minDistance.get()))
+                    self.seg = 'white'
+            if self.segmentation.get() == 3:
+                self.initialpoints = harris_corner(self.normalizedImage, int(self.cellEstimate.get()), float(self.fixscale),
+                                                   int(self.minDistance.get()))
+                self.seg = 'haris'
+            if self.segmentation.get() == 4:
+                self.initialpoints = shi_tomasi(self.normalizedImage, int(self.cellEstimate.get()), float(self.fixscale),
+                                                int(self.minDistance.get()))
+                self.seg = 'shi'
+
+            if self.segmentation.get() == 5:
+                self.mask =  basic_seg(self.frames[0], self.frames)
+                self.initialpoints = shi_tomasi(self.mask, int(self.cellEstimate.get()), float(self.fixscale),
+                                                int(self.minDistance.get()))
 
 
+                self.seg = 'basic'
 
+            # manipulate a tracking method
 
+            if self.track.get() == 8:
+                tkMessageBox.showinfo('..','Segmentation method: %s \n' %self.seg, )
 
+                optical_flow(self, self.frames[1:], self.frames[0], self.initialpoints, str(self.seg),
+                             int(self.cellEstimate.get()), float(self.fixscale), int(self.minDistance.get()), self.trackconvax, self.progressdialog2)
 
+                #for i in range(5):
+                #    for j in range(4):
+                #        l = Label(text='%d.%d' % (i, j), relief=RIDGE)
+                #        l.grid(row=i, column=j, sticky=NSEW)
+            if self.track.get() == 5:
+                centroid_matching(self,self.frames[0], self.frames[1:],self.kernel,self.initialpoints,int(self.cellEstimate.get()), float(self.fixscale), int(self.minDistance.get()), self.trackconvax,
+                                 self.seg)
+        else:
+            tkMessageBox.showinfo('Missing data', 'no data to process')
 
     # scale
     def on_scale_click(self, event):
 
         scale = self.builder.get_object('Scale_1')
-        self.fixscale = float("%.1f" % round(scale.get(),1))
+        self.fixscale = float("%.1f" % round(scale.get(), 1))
         self.label.configure(text=str(self.fixscale))
 
+
+    # generate files
+    def generate_click(self):
+
+        if not (os.path.join(overlaytrajectoryanidir,'animation.gif')):
+            save_gif = True
+            title = ''
+            images, imgs = [], []
+            for foldername in os.listdir(overlaytrajectorydir):
+                images.append(foldername)
+            images.sort(key=lambda x: int(x.split('.')[0]))
+
+            for _, file in enumerate(images):
+                print file
+                print os.path.join(overlaytrajectorydir,file)
+                im = img2.open(os.path.join(overlaytrajectorydir,file))
+
+                imgs.append(im)
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+            ax.set_axis_off()
+
+            ims = map(lambda x: (ax.imshow(x), ax.set_title(title)), imgs)
+
+            im_ani = animation.ArtistAnimation(fig, ims, interval=600, repeat_delay=500, blit=False)
+
+            if save_gif:
+                im_ani.save(overlaytrajectoryanidir + 'animation.gif', writer='imagemagick')
+
+        self.file_opt = options = {}
+        options['filetypes'] = [('gif', '.gif'), ('text files', '.tif')]
+        options['initialfile'] = 'animation.gif'
+        options['parent'] = overlaytrajectoryanidir
+        self.savefile()
+
+    def savefile(self):
+        print self.file_opt
+        return asksaveasfile(mode='w', **self.file_opt)
+
+
+
+
+
+    def save_as_zip(self):
+
+        zf = zipfile.ZipFile("data.zip", "w")
+        for dirname, subdirs, files in os.walk(tmppath):
+            zf.write(dirname)
+            for filename in files:
+                zf.write(os.path.join(dirname, filename))
+        zf.close()
+
+    def clear_frame(self, master):
+
+        for child in self.mainwindow.winfo_children():
+            child.destroy()
+        self.mainwindow.pack_forget()
+        self.mainwindow.grid_forget()
+
+        self.builder = builder = pygubu.Builder()
+
+        # 2: Load an ui file
+        builder.add_from_file('celltracker.ui')
+
+        # 3: Create the widget using a master as parent
+        self.mainwindow = builder.get_object('mainwindow', master)
 
 
 
@@ -747,7 +1068,7 @@ if __name__ == '__main__':
     menu.add_command(label="Exit", command=lambda: exit())
     menu.add_cascade(label="Edit", menu=edit)
 
-    #root.geometry('1500x1000')
+    # root.geometry('1500x1000')
 
     img = Image("photo", file="/home/sami/Desktop/multimot-logo-e1437119906276.png")
     root.tk.call('wm', 'iconphoto', root._w, img)
